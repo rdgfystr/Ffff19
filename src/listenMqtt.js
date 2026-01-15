@@ -486,169 +486,77 @@ function parseDelta(defaultFuncs, api, ctx, globalCallback, {
           };
           globalCallback(null, messageUnsend);
         } else if (delta.deltaMessageReply) {
-          const mdata =
-            delta.deltaMessageReply.message === undefined ?
-            [] :
-            delta.deltaMessageReply.message.data === undefined ?
-            [] :
-            delta.deltaMessageReply.message.data.prng === undefined ?
-            [] :
-            JSON.parse(delta.deltaMessageReply.message.data.prng);
+  const msg = delta.deltaMessageReply.message || {};
+  let mentions = {};
 
-          const m_id = mdata.map((u) => u.i);
-          const m_offset = mdata.map((u) => u.o);
-          const m_length = mdata.map((u) => u.l);
+  try {
+    const prng = msg?.data?.prng ? JSON.parse(msg.data.prng) : [];
+    for (const m of prng) {
+      if (m.i && m.o !== undefined && m.l !== undefined) {
+        mentions[m.i] = (msg.body || "").substr(m.o, m.l);
+      }
+    }
+  } catch {
+    mentions = {};
+  }
 
-          const mentions = {};
-          for (let i = 0; i < m_id.length; i++) {
-            mentions[m_id[i]] = (delta.deltaMessageReply.message.body || '').substring(m_offset[i], m_offset[i] + m_length[i]);
-          }
+  const callbackToReturn = {
+    type: "message_reply",
+    threadID: (
+      msg.messageMetadata.threadKey.threadFbId ||
+      msg.messageMetadata.threadKey.otherUserFbId
+    ).toString(),
+    messageID: msg.messageMetadata.messageId,
+    senderID: msg.messageMetadata.actorFbId.toString(),
+    body: msg.body || "",
+    args: (msg.body || "").trim().split(/\s+/),
+    isGroup: !!msg.messageMetadata.threadKey.threadFbId,
+    mentions,
+    timestamp: parseInt(msg.messageMetadata.timestamp),
+    participantIDs: (msg.participants || []).map(e => e.toString()),
+    attachments: (msg.attachments || []).map(att => {
+      try {
+        const mercury = JSON.parse(att.mercuryJSON);
+        Object.assign(att, mercury);
+        return utils._formatAttachment(att);
+      } catch {
+        return att;
+      }
+    })
+  };
 
-          const callbackToReturn = {
-            type: 'message_reply',
-            threadID: (delta.deltaMessageReply.message.messageMetadata.threadKey.threadFbId ? delta.deltaMessageReply.message.messageMetadata.threadKey.threadFbId : delta.deltaMessageReply.message.messageMetadata.threadKey.otherUserFbId).toString(),
-            messageID: delta.deltaMessageReply.message.messageMetadata.messageId,
-            senderID: delta.deltaMessageReply.message.messageMetadata.actorFbId.toString(),
-            attachments: ( delta.deltaMessageReply.message.attachments || [] )
-              .map((att) => {
-                const mercury = JSON.parse(att.mercuryJSON);
-                Object.assign(att, mercury);
-                return att;
-              })
-              .map((att) => {
-                let x;
-                try {
-                  x = utils._formatAttachment(att);
-                } catch (ex) {
-                  x = att;
-                  x.error = ex;
-                  x.type = 'unknown';
-                }
-                return x;
-              }),
-            args: (delta.deltaMessageReply.message.body || '').trim().split(/\s+/),
-            body: delta.deltaMessageReply.message.body || '',
-            isGroup: !!delta.deltaMessageReply.message.messageMetadata.threadKey.threadFbId,
-            mentions,
-            timestamp: parseInt(delta.deltaMessageReply.message.messageMetadata.timestamp),
-            participantIDs: (delta.deltaMessageReply.message.participants || []).map((e) => e.toString()),
-          };
+  if (delta.deltaMessageReply.repliedToMessage) {
+    const rmsg = delta.deltaMessageReply.repliedToMessage;
+    let rmentions = {};
 
-          if (delta.deltaMessageReply.repliedToMessage) {
-            const mdata =
-              delta.deltaMessageReply.repliedToMessage === undefined ?
-              [] :
-              delta.deltaMessageReply.repliedToMessage.data === undefined ?
-              [] :
-              delta.deltaMessageReply.repliedToMessage.data.prng === undefined ?
-              [] :
-              JSON.parse(delta.deltaMessageReply.repliedToMessage.data.prng);
+    try {
+      const rprng = rmsg?.data?.prng ? JSON.parse(rmsg.data.prng) : [];
+      for (const m of rprng) {
+        if (m.i && m.o !== undefined && m.l !== undefined) {
+          rmentions[m.i] = (rmsg.body || "").substr(m.o, m.l);
+        }
+      }
+    } catch {
+      rmentions = {};
+    }
 
-            const m_id = mdata.map((u) => u.i);
-            const m_offset = mdata.map((u) => u.o);
-            const m_length = mdata.map((u) => u.l);
+    callbackToReturn.messageReply = {
+      senderID: rmsg.messageMetadata.actorFbId.toString(),
+      body: rmsg.body || "",
+      mentions: rmentions,
+      messageID: rmsg.messageMetadata.messageId,
+      threadID: callbackToReturn.threadID,
+      isGroup: callbackToReturn.isGroup,
+      timestamp: parseInt(rmsg.messageMetadata.timestamp)
+    };
+  }
 
-            const rmentions = {};
-            for (let i = 0; i < m_id.length; i++) {
-              rmentions[m_id[i]] = (delta.deltaMessageReply.repliedToMessage.body || '').substring(m_offset[i], m_offset[i] + m_length[i]);
-            }
+  if (ctx.globalOptions.autoMarkDelivery) {
+    markDelivery(ctx, api, callbackToReturn.threadID, callbackToReturn.messageID);
+  }
 
-            callbackToReturn.messageReply = {
-              threadID: (delta.deltaMessageReply.repliedToMessage.messageMetadata.threadKey.threadFbId ? delta.deltaMessageReply.repliedToMessage.messageMetadata.threadKey.threadFbId : delta.deltaMessageReply.repliedToMessage.messageMetadata.threadKey.otherUserFbId).toString(),
-              messageID: delta.deltaMessageReply.repliedToMessage.messageMetadata.messageId,
-              senderID: delta.deltaMessageReply.repliedToMessage.messageMetadata.actorFbId.toString(),
-              attachments: delta.deltaMessageReply.repliedToMessage.attachments
-              .map((att) => {
-                let mercury;
-                try {
-                  mercury = JSON.parse(att.mercuryJSON);
-                  Object.assign(att, mercury);
-                } catch (ex) {
-                  mercury = {};
-                }
-                return att;
-              })
-              .map((att) => {
-                let x;
-                try {
-                  x = utils._formatAttachment(att);
-                } catch (ex) {
-                  x = att;
-                  x.error = ex;
-                  x.type = 'unknown';
-                }
-                return x;
-              }),
-              args: (delta.deltaMessageReply.repliedToMessage.body || '').trim().split(/\s+/),
-              body: delta.deltaMessageReply.repliedToMessage.body || '',
-              isGroup: !!delta.deltaMessageReply.repliedToMessage.messageMetadata.threadKey.threadFbId,
-              mentions: rmentions,
-              timestamp: parseInt(delta.deltaMessageReply.repliedToMessage.messageMetadata.timestamp),
-              participantIDs: (delta.deltaMessageReply.repliedToMessage.participants || []).map((e) => e.toString()),
-            };
-          } else if (delta.deltaMessageReply.replyToMessageId) {
-            return defaultFuncs
-              .post('https://www.facebook.com/api/graphqlbatch/', ctx.jar, {
-                av: ctx.globalOptions.pageID,
-                queries: JSON.stringify({
-                  o0: {
-                    doc_id: '2848441488556444',
-                    query_params: {
-                      thread_and_message_id: {
-                        thread_id: callbackToReturn.threadID,
-                        message_id: delta.deltaMessageReply.replyToMessageId.id,
-                      },
-                    },
-                  },
-                }),
-              })
-              .then(utils.parseAndCheckLogin(ctx, defaultFuncs))
-              .then((resData) => {
-                if (resData[resData.length - 1].error_results > 0) throw resData[0].o0.errors;
-                if (resData[resData.length - 1].successful_results === 0) throw {
-                  error: 'forcedFetch: there was no successful_results',
-                  res: resData
-                };
-                const fetchData = resData[0].o0.data.message;
-                const mobj = {};
-
-                for (const n in fetchData.message.ranges) {
-                  mobj[fetchData.message.ranges[n].entity.id] = (fetchData.message.text || '').substr(fetchData.message.ranges[n].offset, fetchData.message.ranges[n].length);
-                }
-                callbackToReturn.messageReply = {
-                  type: 'Message',
-                  threadID: callbackToReturn.threadID,
-                  messageID: fetchData.message_id,
-                  senderID: fetchData.message_sender.id.toString(),
-                  attachments: fetchData.message.blob_attachment.map((att) => utils._formatAttachment({
-                    blob_attachment: att
-                  })),
-                  args: (fetchData.message.text || '').trim().split(/\s+/) || [],
-                  body: fetchData.message.text || '',
-                  isGroup: callbackToReturn.isGroup,
-                  mentions: mobj,
-                  timestamp: parseInt(fetchData.timestamp_precise),
-                };
-              })
-
-              .catch((err) => log.error('forcedFetch', err))
-              .finally(() => {
-                if (ctx.globalOptions.autoMarkDelivery) {
-                  markDelivery(ctx, api, callbackToReturn.threadID, callbackToReturn.messageID);
-                }
-
-                if (!ctx.globalOptions.selfListen && callbackToReturn.senderID === ctx.userID) return;
-                globalCallback(null, callbackToReturn);
-              });
-          } else {
-            callbackToReturn.delta = delta;
-          }
-          if (ctx.globalOptions.autoMarkDelivery) {
-            markDelivery(ctx, api, callbackToReturn.threadID, callbackToReturn.messageID);
-          }
-
-          if (!ctx.globalOptions.selfListen && callbackToReturn.senderID === ctx.userID) return;
-          globalCallback(null, callbackToReturn);
+  if (!ctx.globalOptions.selfListen && callbackToReturn.senderID === ctx.userID) return;
+  globalCallback(null, callbackToReturn);
         }
       }
 
